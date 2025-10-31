@@ -2,7 +2,6 @@
 set -e
 
 : "${RAILS_ENV:=production}"
-# si no te pasan SECRET_KEY_BASE por env, usa uno temporal para assets
 : "${SECRET_KEY_BASE:=temp_dummy_key_for_assets}"
 export RAILS_ENV SECRET_KEY_BASE
 
@@ -18,7 +17,6 @@ echo "==> Running migrations..."
 bin/rails db:migrate
 
 echo "==> Precompiling assets..."
-# si ya existen, no falla
 bundle exec rake assets:precompile || true
 
 echo "==> Starting Puma..."
