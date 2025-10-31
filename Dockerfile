@@ -1,39 +1,49 @@
 FROM openproject/openproject:16-slim
 
-# 1) Construimos como root
+# ---- Build como root
 USER root
 WORKDIR /app
 
-# 2) Limpia el código de la imagen y copia TU fork
+# Paquetes para compilar gems nativas (pg, etc.)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+      git \
+      python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Limpia código previo y copia TU fork
 RUN rm -rf /app/* /app/.[!.]* /app/..?* || true
 COPY . /app
 
-# 3) Config de bundler: instala dentro de /app (evita /usr/local/bundle)
+# Config Bundler para instalar dentro del árbol de la app
 ENV RAILS_ENV=production \
     BUNDLE_WITHOUT="development test" \
     BUNDLE_DEPLOYMENT=1 \
-    BUNDLE_PATH=/app/vendor/bundle
+    BUNDLE_PATH=/app/vendor/bundle \
+    BUNDLE_JOBS=4 \
+    BUNDLE_RETRY=3 \
+    BUNDLE_FORCE_RUBY_PLATFORM=1
 
-# 4) Instala dependencias y precompila assets (como root)
-#    (si la primera vez no hay lockfile de yarn, por eso el "|| true")
-RUN bundle install -j4 \
- && yarn install --frozen-lockfile || true \
- && bundle exec rake assets:precompile
+# ---- Ejecuta pasos por separado (logs claros)
+RUN ruby -v && bundler -v
+RUN bundle config set path "$BUNDLE_PATH"
+RUN bundle install --jobs=${BUNDLE_JOBS} --retry=${BUNDLE_RETRY} --verbose
 
-# 5) Crea un usuario para ejecutar la app en runtime
-#    (si ya existe, los comandos '|| true' evitan fallar)
+# (No precompilamos assets aquí; lo haremos al arrancar)
+
+# Crea usuario 'app' para runtime y da permisos
 RUN groupadd -g 1001 app || true \
- && useradd  -u 1001 -g app -m -s /bin/sh app || true \
+ && useradd -u 1001 -g app -m -s /bin/sh app || true \
  && chown -R app:app /app
 
-# 6) Copia el entrypoint y permisos
+# EntryPoint
 COPY entrypoint.railway.sh /usr/local/bin/entrypoint.railway.sh
 RUN chmod +x /usr/local/bin/entrypoint.railway.sh \
  && chown app:app /usr/local/bin/entrypoint.railway.sh
 
-# 7) Cambiamos a usuario no-root para ejecutar
 USER app
-
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.railway.sh"]
 CMD ["bundle", "exec", "puma", "-C", "config/puma.rb"]
