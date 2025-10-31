@@ -1,6 +1,24 @@
-# ...arriba de esto ya copiaste tu repo a /app y tienes los paquetes del sistema...
+# ---------- BASE ----------
+FROM openproject/openproject:16-slim
 
-# Variables de entorno para Bundler
+# Construimos como root
+USER root
+WORKDIR /app
+
+# Paquetes para compilar gems nativas (pg, etc.)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+      git \
+      python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Limpia código previo de la imagen y copia TU repo
+RUN rm -rf /app/* /app/.[!.]* /app/..?* || true
+COPY . /app
+
+# ---- Variables Bundler (sin modo deployment) ----
 ENV RAILS_ENV=production \
     BUNDLE_WITHOUT="development test" \
     BUNDLE_PATH=/app/vendor/bundle \
@@ -9,11 +27,10 @@ ENV RAILS_ENV=production \
     BUNDLE_FORCE_RUBY_PLATFORM=1 \
     BUNDLE_FROZEN=0
 
-# (1) Mostrar versiones base
+# Mostrar versiones base (debug)
 RUN ruby -v && gem -v && bundler -v || true
 
-# (2) Instalar la MISMA versión de Bundler que pide el lockfile (si existe)
-#     Extraemos la línea debajo de "BUNDLED WITH" y la usamos.
+# Instalar la misma versión de Bundler que pide el lockfile (si existe)
 RUN set -eux; \
   if [ -f Gemfile.lock ]; then \
     BVER="$(awk '/BUNDLED WITH/{getline; gsub(/^[ \t]+/,""); print}' Gemfile.lock || true)"; \
@@ -24,10 +41,10 @@ RUN set -eux; \
   fi; \
   bundler -v
 
-# (3) Asegurar plataforma linux en el lock (si no está)
+# Asegurar plataforma linux en el lock (si no está)
 RUN bundle lock --add-platform x86_64-linux || true
 
-# (4) Config explícita y bundle con logs detallados
+# Instalar gems con logs detallados
 RUN set -eux; \
   bundle config set path "$BUNDLE_PATH"; \
   bundle config set without "$BUNDLE_WITHOUT"; \
@@ -38,12 +55,12 @@ RUN set -eux; \
        echo "==== GEM SOURCES ===="; bundle config get mirror.https://rubygems.org || true; \
        exit 1; }
 
-# (5) (Seguimos igual) crear usuario no-root para runtime y permisos
+# Crear usuario no-root para runtime y dar permisos
 RUN groupadd -g 1001 app || true \
  && useradd -u 1001 -g app -m -s /bin/sh app || true \
  && chown -R app:app /app
 
-# Entrypoint (igual que tenías)
+# Entrypoint
 COPY entrypoint.railway.sh /usr/local/bin/entrypoint.railway.sh
 RUN chmod +x /usr/local/bin/entrypoint.railway.sh \
  && chown app:app /usr/local/bin/entrypoint.railway.sh
