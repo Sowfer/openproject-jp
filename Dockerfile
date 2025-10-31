@@ -1,24 +1,33 @@
-# ---------- BASE ----------
-FROM openproject/openproject:16-slim
+FROM ruby:3.2-bullseye
 
-# Construimos como root
+# Construcción como root
 USER root
 WORKDIR /app
 
-# Paquetes para compilar gems nativas (pg, etc.)
+# Paquetes de sistema (gems nativas, node, yarn, pg, etc.)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential \
       libpq-dev \
       git \
+      curl \
+      ca-certificates \
       python3 \
+      imagemagick \
+      shared-mime-info \
  && rm -rf /var/lib/apt/lists/*
 
-# Limpia código previo de la imagen y copia TU repo
-RUN rm -rf /app/* /app/.[!.]* /app/..?* || true
+# Node 18 + Yarn
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+ && apt-get update && apt-get install -y nodejs \
+ && corepack enable \
+ && npm i -g yarn \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copia tu repo
 COPY . /app
 
-# ---- Variables Bundler (sin modo deployment) ----
+# Variables Bundler
 ENV RAILS_ENV=production \
     BUNDLE_WITHOUT="development test" \
     BUNDLE_PATH=/app/vendor/bundle \
@@ -27,24 +36,18 @@ ENV RAILS_ENV=production \
     BUNDLE_FORCE_RUBY_PLATFORM=1 \
     BUNDLE_FROZEN=0
 
-# Mostrar versiones base (debug)
-RUN ruby -v && gem -v && bundler -v || true
-
-# Instalar la misma versión de Bundler que pide el lockfile (si existe)
+# Alinear versión de bundler con el lockfile (si hay)
 RUN set -eux; \
   if [ -f Gemfile.lock ]; then \
     BVER="$(awk '/BUNDLED WITH/{getline; gsub(/^[ \t]+/,""); print}' Gemfile.lock || true)"; \
-    if [ -n "$BVER" ]; then \
-      echo "Installing bundler $BVER"; \
-      gem install bundler -v "$BVER"; \
-    fi; \
+    if [ -n "$BVER" ]; then gem install bundler -v "$BVER"; fi; \
   fi; \
   bundler -v
 
-# Asegurar plataforma linux en el lock (si no está)
+# Asegurar plataforma linux en el lock (si faltaba)
 RUN bundle lock --add-platform x86_64-linux || true
 
-# Instalar gems con logs detallados
+# Instalar gems con logs (si falla, imprime diagnóstico útil)
 RUN set -eux; \
   bundle config set path "$BUNDLE_PATH"; \
   bundle config set without "$BUNDLE_WITHOUT"; \
@@ -52,10 +55,12 @@ RUN set -eux; \
   bundle install --jobs="${BUNDLE_JOBS}" --retry="${BUNDLE_RETRY}" --no-prune --verbose \
   || { echo "==== BUNDLE ENV ===="; bundle env || true; \
        echo "==== BUNDLED WITH ===="; awk '/BUNDLED WITH/{print; getline; print}' Gemfile.lock || true; \
-       echo "==== GEM SOURCES ===="; bundle config get mirror.https://rubygems.org || true; \
        exit 1; }
 
-# Crear usuario no-root para runtime y dar permisos
+# (Opcional) dependencias frontend
+RUN yarn install --frozen-lockfile || true
+
+# Usuario no-root de runtime
 RUN groupadd -g 1001 app || true \
  && useradd -u 1001 -g app -m -s /bin/sh app || true \
  && chown -R app:app /app
