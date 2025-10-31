@@ -1,39 +1,38 @@
-# Usamos la imagen oficial como base
 FROM openproject/openproject:16-slim
 
-# 1) Construimos como root para evitar problemas de permisos
+# 1) Construimos como root
 USER root
-
-# 2) Trabajamos en /app (código de OpenProject en la imagen)
 WORKDIR /app
 
-# 3) Limpiar el código previo (puede fallar si no somos root)
+# 2) Limpia el código de la imagen y copia TU fork
 RUN rm -rf /app/* /app/.[!.]* /app/..?* || true
-
-# 4) Copiar TU fork dentro de /app
 COPY . /app
 
-# 5) Asegurar permisos para el usuario de la app (openproject suele ser uid/gid 1000)
-RUN chown -R 1000:1000 /app
+# 3) Config de bundler: instala dentro de /app (evita /usr/local/bundle)
+ENV RAILS_ENV=production \
+    BUNDLE_WITHOUT="development test" \
+    BUNDLE_DEPLOYMENT=1 \
+    BUNDLE_PATH=/app/vendor/bundle
 
-# 6) Evitar escribir en /usr/local/bundle: instalamos las gems en /app/vendor/bundle
-ENV BUNDLE_DEPLOYMENT=1 \
-    BUNDLE_PATH=/app/vendor/bundle \
-    BUNDLE_WITHOUT="development test"
+# 4) Instala dependencias y precompila assets (como root)
+#    (si la primera vez no hay lockfile de yarn, por eso el "|| true")
+RUN bundle install -j4 \
+ && yarn install --frozen-lockfile || true \
+ && bundle exec rake assets:precompile
 
-# 7) Instalar dependencias y precompilar assets
-#    (yarn puede no tener lockfile la 1a vez; por eso || true)
-RUN su -s /bin/sh -c "bundle install -j4" - 1000 \
- && su -s /bin/sh -c "yarn install --frozen-lockfile || true" - 1000 \
- && su -s /bin/sh -c "bundle exec rake assets:precompile" - 1000
+# 5) Crea un usuario para ejecutar la app en runtime
+#    (si ya existe, los comandos '|| true' evitan fallar)
+RUN groupadd -g 1001 app || true \
+ && useradd  -u 1001 -g app -m -s /bin/sh app || true \
+ && chown -R app:app /app
 
-# 8) Copiar entrypoint y dar permisos
+# 6) Copia el entrypoint y permisos
 COPY entrypoint.railway.sh /usr/local/bin/entrypoint.railway.sh
 RUN chmod +x /usr/local/bin/entrypoint.railway.sh \
- && chown 1000:1000 /usr/local/bin/entrypoint.railway.sh
+ && chown app:app /usr/local/bin/entrypoint.railway.sh
 
-# 9) Volver al usuario de la app
-USER 1000:1000
+# 7) Cambiamos a usuario no-root para ejecutar
+USER app
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.railway.sh"]
